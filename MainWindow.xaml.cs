@@ -10,7 +10,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using Microsoft.Win32;
 using ImageMagick;
-using Microsoft.WindowsAPICodePack.Dialogs; // <-- WICHTIG: Erfordert das NuGet Paket!
+using Microsoft.WindowsAPICodePack.Dialogs;
 
 namespace BatchToolkit
 {
@@ -140,7 +140,6 @@ namespace BatchToolkit
 
         private void AddFolder_Click(object sender, RoutedEventArgs e)
         {
-            // DER NEUE, MODERNE WINDOWS 10/11 FOLDER PICKER!
             CommonOpenFileDialog dialog = new CommonOpenFileDialog();
             dialog.IsFolderPicker = true;
             dialog.Title = "Select Folder to Scan";
@@ -208,12 +207,21 @@ namespace BatchToolkit
         private async Task RunConversionAsync()
         {
             bool isPngToDds = currentMode == "TabPngDds";
-            bool resize = ChkResize.IsChecked == true;
-            bool uncompressed = ChkB8G8.IsChecked == true;
+
+            // Read UI Dropdown values safely
+            string selectedRes = "";
+            string selectedComp = "";
+            Dispatcher.Invoke(() => {
+                if (isPngToDds)
+                {
+                    selectedRes = ((ComboBoxItem)CmbResolution.SelectedItem).Content.ToString();
+                    selectedComp = ((ComboBoxItem)CmbCompression.SelectedItem).Content.ToString();
+                }
+            });
 
             int total = selectedFiles.Count;
             int success = 0;
-            string lastError = ""; // FEHLER SPEICHERN!
+            string lastError = "";
 
             await Task.Run(() =>
             {
@@ -234,20 +242,34 @@ namespace BatchToolkit
                         {
                             if (isPngToDds)
                             {
-                                if (resize) image.Resize(24, 24);
+                                // --- RESIZING LOGIC ---
+                                if (selectedRes != "Original Size")
+                                {
+                                    var parts = selectedRes.Split('x');
+                                    // HIER IST DER FIX: uint statt int nutzen!
+                                    if (parts.Length == 2 && uint.TryParse(parts[0], out uint w) && uint.TryParse(parts[1], out uint h))
+                                    {
+                                        // IgnoreAspectRatio zwingt das Bild exakt in die Texturmaße (z.B. 28x28)
+                                        image.Resize(new MagickGeometry(w, h) { IgnoreAspectRatio = true });
+                                    }
+                                }
 
                                 image.Format = MagickFormat.Dds;
+                                image.ColorType = ColorType.TrueColorAlpha;
+                                image.Depth = 8;
 
-                                // DER MAGICK.NET DDS FIX: 
-                                // DDS Kompression muss über "Defines" gesetzt werden, 
-                                // sonst stürzt die Bibliothek intern ab!
-                                if (uncompressed)
+                                // --- COMPRESSION LOGIC ---
+                                if (selectedComp.Contains("Lossless"))
                                 {
                                     image.Settings.SetDefine(MagickFormat.Dds, "compression", "none");
                                 }
-                                else
+                                else if (selectedComp.Contains("BC3"))
                                 {
                                     image.Settings.SetDefine(MagickFormat.Dds, "compression", "dxt5");
+                                }
+                                else if (selectedComp.Contains("BC1"))
+                                {
+                                    image.Settings.SetDefine(MagickFormat.Dds, "compression", "dxt1");
                                 }
                             }
                             else
@@ -260,7 +282,6 @@ namespace BatchToolkit
                     }
                     catch (Exception ex)
                     {
-                        // Fängt den Absturz auf und speichert den Grund
                         lastError = ex.Message;
                     }
 
